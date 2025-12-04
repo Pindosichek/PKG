@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rasterization Algorithms</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 20px;
+        }
+
+        canvas {
+            border: 1px solid black;
+            background-color: #f0f0f0;
+        }
+
+        .controls {
+            margin-bottom: 20px;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .controls input, .controls select, .controls button {
+            padding: 8px;
+            font-size: 16px;
+        }
+
+        #performanceResults {
+            margin: 10px 0;
+            font-weight: bold;
+            min-height: 24px;
+        }
+
+        #lineInputs, #circleInputs {
+            display: flex;
+            gap: 5px;
+            align-items: center;
+        }
+    </style>
+</head>
+<body>
+    <h1>Rasterization Algorithms Visualization</h1>
+    <div class="controls">
+        <label for="algorithmSelect">Choose Algorithm:</label>
+        <select id="algorithmSelect">
+            <option value="dda">DDA Line</option>
+            <option value="bresenhamLine">Bresenham's Line</option>
+            <option value="bresenhamCircle">Bresenham's Circle</option>
+            <option value="stepByStepLine">Step-by-Step Line</option>
+        </select>
+
+        <div id="lineInputs">
+            <label for="x0">X0:</label><input type="number" id="x0" value="-100">
+            <label for="y0">Y0:</label><input type="number" id="y0" value="-50">
+            <label for="x1">X1:</label><input type="number" id="x1" value="150">
+            <label for="y1">Y1:</label><input type="number" id="y1" value="80">
+        </div>
+
+        <div id="circleInputs" style="display: none;">
+            <label for="xc">Xc:</label><input type="number" id="xc" value="0">
+            <label for="yc">Yc:</label><input type="number" id="yc" value="0">
+            <label for="r">Radius:</label><input type="number" id="r" value="70">
+        </div>
+
+        <label for="scale">Scale (pixels/unit):</label>
+        <input type="number" id="scale" value="20" min="1">
+
+        <button id="drawButton">Draw</button>
+        <button id="clearButton">Clear</button>
+    </div>
+    <div id="performanceResults"></div>
+    <canvas id="rasterCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('rasterCanvas');
+        const ctx = canvas.getContext('2d');
+
+        canvas.width = 800;
+        canvas.height = 600;
+
+        const centerX = canvas.width / 2;
+        const centerY = canvas.height / 2;
+
+        let currentScale = parseInt(document.getElementById('scale').value);
+
+        // Функция для отрисовки отдельного пикселя на холсте
+        function plotPixel(x, y, color = 'red') {
+            ctx.fillStyle = color;
+            ctx.fillRect(centerX + x * currentScale, centerY - y * currentScale, currentScale, currentScale);
+        }
+
+        // Функция для отрисовки сетки
+        function drawGrid() {
+            ctx.strokeStyle = '#ccc';
+            ctx.lineWidth = 0.5;
+
+            // Отрисовка вертикальных линий
+            for (let x = -centerX; x <= centerX; x += currentScale) {
+                ctx.beginPath();
+                ctx.moveTo(centerX + x, 0);
+                ctx.lineTo(centerX + x, canvas.height);
+                ctx.stroke();
+            }
+
+            // Отрисовка горизонтальных линий
+            for (let y = -centerY; y <= centerY; y += currentScale) {
+                ctx.beginPath();
+                ctx.moveTo(0, centerY - y);
+                ctx.lineTo(canvas.width, centerY - y);
+                ctx.stroke();
+            }
+        }
+
+        // Функция для отрисовки осей координат
+        function drawAxes() {
+            ctx.strokeStyle = 'black';
+            ctx.lineWidth = 1;
+
+            // Ось X
+            ctx.beginPath();
+            ctx.moveTo(0, centerY);
+            ctx.lineTo(canvas.width, centerY);
+            ctx.stroke();
+
+            // Ось Y
+            ctx.beginPath();
+            ctx.moveTo(centerX, 0);
+            ctx.lineTo(centerX, canvas.height);
+            ctx.stroke();
+
+            // Стрелки для осей
+            drawArrow(canvas.width, centerY, -1);
+            drawArrow(0, centerY, 1);
+            drawArrow(centerX, 0, 1, true);
+            drawArrow(centerX, canvas.height, -1, true);
+        }
+
+        // Функция для отрисовки стрелок на концах осей
+        function drawArrow(x, y, direction, isYAxis = false) {
+            const arrowSize = 10;
+            ctx.save();
+            ctx.translate(x, y);
+            if (isYAxis) {
+                ctx.rotate(Math.PI / 2 * direction);
+            } else {
+                ctx.rotate(Math.PI * (direction === -1 ? 0 : 1));
+            }
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(-arrowSize, -arrowSize / 2);
+            ctx.lineTo(-arrowSize, arrowSize / 2);
+            ctx.closePath();
+            ctx.fill();
+            ctx.restore();
+        }
+
+        // Функция для отрисовки меток осей и начала координат
+        function drawLabels() {
+            ctx.fillStyle = 'black';
+            ctx.font = '12px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+
+            // Метки оси X
+            for (let x = -centerX; x <= centerX; x += currentScale * 5) {
+                if (x !== 0) {
+                    ctx.fillText(x / currentScale, centerX + x, centerY + 15);
+                }
+            }
+
+            // Метки оси Y
+            for (let y = -centerY; y <= centerY; y += currentScale * 5) {
+                if (y !== 0) {
+                    ctx.fillText(y / currentScale, centerX + 15, centerY - y);
+                }
+            }
+
+            ctx.fillText('X', canvas.width - 10, centerY + 15);
+            ctx.fillText('Y', centerX + 15, 10);
+            ctx.fillText('0', centerX - 10, centerY + 10);
+        }
+
+        // Функция для очистки холста
+        function clearCanvas() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+
+        // Функция для отрисовки всей сцены
+        function renderScene() {
+            clearCanvas();
+            drawGrid();
+            drawAxes();
+            drawLabels();
+        }
+
+        // Алгоритм цифрового дифференциального анализатора (ЦДА)
+        function ddaLine(x0, y0, x1, y1, color = 'blue') {
+            let dx = x1 - x0;
+            let dy = y1 - y0;
+
+            let steps = Math.abs(dx) > Math.abs(dy) ? Math.abs(dx) : Math.abs(dy);
+
+            let xIncrement = dx / steps;
+            let yIncrement = dy / steps;
+
+            let x = x0;
+            let y = y0;
+
+            plotPixel(Math.round(x), Math.round(y), color);
+
+            for (let i = 0; i < steps; i++) {
+                x += xIncrement;
+                y += yIncrement;
+                plotPixel(Math.round(x), Math.round(y), color);
+            }
+        }
+
+        // Алгоритм Брезенхема для рисования отрезков
+        function bresenhamLine(x0, y0, x1, y1, color = 'green') {
+            let dx = Math.abs(x1 - x0);
+            let dy = Math.abs(y1 - y0);
+            let sx = (x0 < x1) ? 1 : -1;
+            let sy = (y0 < y1) ? 1 : -1;
+            let err = dx - dy;
+
+            while (true) {
+                plotPixel(x0, y0, color);
+
+                if (x0 === x1 && y0 === y1) break;
+                let e2 = 2 * err;
+                if (e2 > -dy) {
+                    err -= dy;
+                    x0 += sx;
+                }
+                if (e2 < dx) {
+                    err += dx;
+                    y0 += sy;
+                }
+            }
+        }
+
+        // Алгоритм Брезенхема для рисования окружностей
+        function bresenhamCircle(xc, yc, r, color = 'purple') {
+            let x = 0;
+            let y = r;
+            let p = 3 - 2 * r;
+            
+            function drawCircle(xc, yc, x, y, color) {
+                plotPixel(xc + x, yc + y, color);
+                plotPixel(xc - x, yc + y, color);
+                plotPixel(xc + x, yc - y, color);
+                plotPixel(xc - x, yc - y, color);
+                plotPixel(xc + y, yc + x, color);
+                plotPixel(xc - y, yc + x, color);
+                plotPixel(xc + y, yc - x, color);
+                plotPixel(xc - y, yc - x, color);
+            }
+
+            drawCircle(xc, yc, x, y, color);
+            while (x < y) {
+                if (p < 0) {
+                    p = p + 4 * x + 6;
+                } else {
+                    p = p + 4 * (x - y) + 10;
+                    y--;
+                }
+                x++;
+                drawCircle(xc, yc, x, y, color);
+            }
+        }
+
+        // Пошаговый (наивный) алгоритм рисования отрезков
+        function stepByStepLine(x0, y0, x1, y1, color = 'orange') {
+            let dx = x1 - x0;
+            let dy = y1 - y0;
+
+            if (Math.abs(dx) >= Math.abs(dy)) {
+                let m = dy / dx;
+                let b = y0 - m * x0;
+                let startX = dx > 0 ? x0 : x1;
+                let endX = dx > 0 ? x1 : x0;
+
+                for (let x = startX; x <= endX; x++) {
+                    let y = m * x + b;
+                    plotPixel(x, Math.round(y), color);
+                }
+            } else {
+                let m_inv = dx / dy;
+                let b_inv = x0 - m_inv * y0;
+                let startY = dy > 0 ? y0 : y1;
+                let endY = dy > 0 ? y1 : y0;
+
+                for (let y = startY; y <= endY; y++) {
+                    let x = m_inv * y + b_inv;
+                    plotPixel(Math.round(x), y, color);
+                }
+            }
+        }
+
+        // Инициализация UI элементов
+        const algorithmSelect = document.getElementById('algorithmSelect');
+        const lineInputs = document.getElementById('lineInputs');
+        const circleInputs = document.getElementById('circleInputs');
+        const drawButton = document.getElementById('drawButton');
+        const clearButton = document.getElementById('clearButton');
+        const performanceResults = document.getElementById('performanceResults');
+
+        // Обработчик изменения выбранного алгоритма
+        algorithmSelect.addEventListener('change', () => {
+            if (algorithmSelect.value === 'bresenhamCircle') {
+                lineInputs.style.display = 'none';
+                circleInputs.style.display = 'flex';
+            } else {
+                lineInputs.style.display = 'flex';
+                circleInputs.style.display = 'none';
+            }
+        });
+
+        // Обработчик нажатия кнопки "Draw"
+        drawButton.addEventListener('click', () => {
+            currentScale = parseInt(document.getElementById('scale').value);
+            renderScene();
+            const selectedAlgorithm = algorithmSelect.value;
+            let startTime, endTime, executionTime;
+
+            if (selectedAlgorithm === 'dda') {
+                const x0 = parseInt(document.getElementById('x0').value);
+                const y0 = parseInt(document.getElementById('y0').value);
+                const x1 = parseInt(document.getElementById('x1').value);
+                const y1 = parseInt(document.getElementById('y1').value);
+                startTime = performance.now();
+                ddaLine(x0, y0, x1, y1);
+                endTime = performance.now();
+            } else if (selectedAlgorithm === 'bresenhamLine') {
+                const x0 = parseInt(document.getElementById('x0').value);
+                const y0 = parseInt(document.getElementById('y0').value);
+                const x1 = parseInt(document.getElementById('x1').value);
+                const y1 = parseInt(document.getElementById('y1').value);
+                startTime = performance.now();
+                bresenhamLine(x0, y0, x1, y1);
+                endTime = performance.now();
+            } else if (selectedAlgorithm === 'stepByStepLine') {
+                const x0 = parseInt(document.getElementById('x0').value);
+                const y0 = parseInt(document.getElementById('y0').value);
+                const x1 = parseInt(document.getElementById('x1').value);
+                const y1 = parseInt(document.getElementById('y1').value);
+                startTime = performance.now();
+                stepByStepLine(x0, y0, x1, y1);
+                endTime = performance.now();
+            } else if (selectedAlgorithm === 'bresenhamCircle') {
+                const xc = parseInt(document.getElementById('xc').value);
+                const yc = parseInt(document.getElementById('yc').value);
+                const r = parseInt(document.getElementById('r').value);
+                startTime = performance.now();
+                bresenhamCircle(xc, yc, r);
+                endTime = performance.now();
+            }
+
+            if (startTime && endTime) {
+                executionTime = (endTime - startTime).toFixed(3);
+                performanceResults.textContent = `Время выполнения: ${executionTime} мс`;
+            } else {
+                performanceResults.textContent = '';
+            }
+        });
+
+        // Обработчик нажатия кнопки "Clear"
+        clearButton.addEventListener('click', () => {
+            renderScene();
+            performanceResults.textContent = '';
+        });
+
+        // Начальная отрисовка сцены
+        renderScene();
+    </script>
+</body>
+</html>
