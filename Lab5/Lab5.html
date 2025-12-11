@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Line and Polygon Clipping Algorithms</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-top: 20px;
+        }
+
+        .top-controls {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .top-controls input[type="file"] {
+            margin-right: 10px;
+        }
+
+        h1 {
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        canvas {
+            background-color: #f0f0f0;
+        }
+
+        #resetButton {
+            margin-left: 10px;
+            padding: 8px 15px;
+            font-size: 1em;
+            cursor: pointer;
+        }
+
+        .explanation-box {
+            width: 800px;
+            margin-top: 20px;
+            padding: 15px;
+            border: 1px solid #ccc;
+            background-color: #f9f9f9;
+            text-align: left;
+            box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .explanation-box h2 {
+            margin-top: 0;
+            color: #333;
+        }
+
+        .explanation-box h3 {
+            color: #444;
+        }
+
+        .explanation-box p {
+            line-height: 1.6;
+            color: #555;
+        }
+    </style>
+</head>
+<body>
+    <h1>Алгоритм средней точки и Алгоритм отсечения отрезков выпуклым многоугольником</h1>
+    <div class="top-controls">
+        <input type="file" id="fileInput" accept=".txt">
+        <button id="resetButton">Reset</button>
+    </div>
+    <canvas id="clippingCanvas" width="800" height="600" style="border:1px solid #000000;"></canvas>
+    <div id="explanation" class="explanation-box">
+        <h2>Algorithm Explanation</h2>
+        <p>Select an algorithm to see its explanation here.</p>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('clippingCanvas');
+        const ctx = canvas.getContext('2d');
+        const fileInput = document.getElementById('fileInput');
+        const resetButton = document.getElementById('resetButton');
+        const explanationDiv = document.getElementById('explanation');
+
+        let segments = [];
+        let clippingWindow = null;
+        let clippingPolygon = null;
+
+        fileInput.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (!file) {
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const content = e.target.result;
+                parseInputFile(content);
+                drawScene();
+            };
+            reader.readAsText(file);
+        });
+
+        resetButton.addEventListener('click', () => {
+            segments = [];
+            clippingWindow = null;
+            clippingPolygon = null;
+            fileInput.value = '';
+            drawScene();
+            displayAlgorithmExplanation();
+        });
+
+        function parseInputFile(content) {
+            const lines = content.trim().split('\n');
+            const numSegments = parseInt(lines[0]);
+
+            segments = [];
+            for (let i = 1; i <= numSegments; i++) {
+                const coords = lines[i].split(' ').map(Number);
+                segments.push({
+                    p1: { x: coords[0], y: coords[1] },
+                    p2: { x: coords[2], y: coords[3] }
+                });
+            }
+
+            const windowLine = lines[numSegments + 1].split(' ');
+            
+            if (windowLine[0] === 'polygon') {
+                const numVertices = parseInt(windowLine[1]);
+                clippingPolygon = [];
+                
+                for (let i = 0; i < numVertices; i++) {
+                    const coords = lines[numSegments + 2 + i].split(' ').map(Number);
+                    clippingPolygon.push({ x: coords[0], y: coords[1] });
+                }
+                clippingWindow = null;
+            } else {
+                const windowCoords = windowLine.map(Number);
+                clippingWindow = {
+                    xmin: windowCoords[0],
+                    ymin: windowCoords[1],
+                    xmax: windowCoords[2],
+                    ymax: windowCoords[3]
+                };
+                clippingPolygon = null;
+            }
+        }
+
+        function drawLine(p1, p2, color = 'black', lineWidth = 1) {
+            ctx.beginPath();
+            ctx.moveTo(p1.x, p1.y);
+            ctx.lineTo(p2.x, p2.y);
+            ctx.strokeStyle = color;
+            ctx.lineWidth = lineWidth;
+            ctx.stroke();
+        }
+
+        function drawPolygon(polygon, color = 'blue', lineWidth = 2) {
+            if (!polygon || polygon.length < 3) return;
+            
+            ctx.beginPath();
+            ctx.moveTo(polygon[0].x, polygon[0].y);
+            for (let i = 1; i < polygon.length; i++) {
+                ctx.lineTo(polygon[i].x, polygon[i].y);
+            }
+            ctx.closePath();
+            ctx.strokeStyle = color;
+            ctx.lineWidth = lineWidth;
+            ctx.stroke();
+        }
+
+        function drawClippingWindow() {
+            const { xmin, ymin, xmax, ymax } = clippingWindow;
+            ctx.strokeStyle = 'blue';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(xmin, ymin, xmax - xmin, ymax - ymin);
+        }
+
+        function drawSegments(segmentsToDraw, color = 'green') {
+            segmentsToDraw.forEach(segment => {
+                drawLine(segment.p1, segment.p2, color);
+            });
+        }
+
+        function drawCoordinateSystem() {
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            ctx.strokeStyle = 'lightgray';
+            ctx.lineWidth = 0.5;
+
+            drawLine({ x: 0, y: centerY }, { x: canvas.width, y: centerY }, 'gray', 1);
+            drawLine({ x: centerX, y: 0 }, { x: centerX, y: canvas.height }, 'gray', 1);
+
+            ctx.fillStyle = 'black';
+            ctx.fillText('(0,0)', centerX + 5, centerY - 5);
+
+            ctx.translate(centerX, centerY);
+            ctx.scale(1, -1);
+        }
+
+        function drawScene() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawCoordinateSystem();
+            
+            if (clippingWindow) {
+                drawClippingWindow();
+            } else if (clippingPolygon) {
+                drawPolygon(clippingPolygon, 'blue', 2);
+            }
+            
+            drawSegments(segments, 'green');
+
+            const clippedSegments = [];
+            segments.forEach(segment => {
+                let clipped = null;
+                if (clippingWindow) {
+                    clipped = midpointClip(segment, clippingWindow);
+                } else if (clippingPolygon) {
+                    clipped = cyrusBeckClip(segment, clippingPolygon);
+                }
+                if (clipped) {
+                    clippedSegments.push(clipped);
+                }
+            });
+            drawSegments(clippedSegments, 'red');
+            displayAlgorithmExplanation();
+        }
+
+        function displayAlgorithmExplanation() {
+            let explanationContent = '<h2>Объяснение алгоритмов</h2>';
+
+            explanationContent += '<h3>Алгоритм средней точки</h3>' +
+                '<p>Итерационный метод, который многократно делит отрезок пополам до тех пор, пока оба его конца не окажутся внутри отсекающего окна, или не будет определено, что весь отрезок находится за пределами окна.</p>' +
+                '<p>На каждой итерации вычисляются коды области для обоих концов отрезка. Если оба конца внутри - отрезок принимается. Если оба снаружи с одной стороны - отбрасывается. Иначе делится пополам и процесс повторяется.</p>';
+
+            explanationContent += '<h3>Алгоритм Кируса-Бека</h3>' +
+                '<p>Алгоритм отсечения отрезков выпуклым многоугольником. Для каждого ребра многоугольника вычисляется нормаль, направленная внутрь.</p>' +
+                '<p>Определяются параметры входа (tE) и выхода (tL) отрезка относительно многоугольника. Если tE ≤ tL, то видимая часть отрезка вычисляется по этим параметрам.</p>';
+
+            explanationDiv.innerHTML = explanationContent;
+        }
+
+        // Алгоритм средней точки
+        const INSIDE = 0;
+        const LEFT = 1;
+        const RIGHT = 2;
+        const BOTTOM = 4;
+        const TOP = 8;
+
+        function computeOutCode(p, window) {
+            let code = INSIDE;
+            if (p.x < window.xmin) {
+                code |= LEFT;
+            } else if (p.x > window.xmax) {
+                code |= RIGHT;
+            }
+            if (p.y < window.ymin) {
+                code |= BOTTOM;
+            } else if (p.y > window.ymax) {
+                code |= TOP;
+            }
+            return code;
+        }
+
+        function midpointClip(segment, window) {
+            let x1 = segment.p1.x, y1 = segment.p1.y;
+            let x2 = segment.p2.x, y2 = segment.p2.y;
+
+            const MAX_ITERATIONS = 20;
+
+            for (let i = 0; i < MAX_ITERATIONS; i++) {
+                const outcode1 = computeOutCode({ x: x1, y: y1 }, window);
+                const outcode2 = computeOutCode({ x: x2, y: y2 }, window);
+
+                if (outcode1 === 0 && outcode2 === 0) {
+                    return { p1: { x: x1, y: y1 }, p2: { x: x2, y: y2 } };
+                } else if (outcode1 & outcode2) {
+                    return null;
+                } else {
+                    let xm = (x1 + x2) / 2;
+                    let ym = (y1 + y2) / 2;
+
+                    const outcodeMid = computeOutCode({ x: xm, y: ym }, window);
+
+                    if (outcodeMid === 0) {
+                        if (outcode1 !== 0) {
+                            x1 = xm;
+                            y1 = ym;
+                        } else {
+                            x2 = xm;
+                            y2 = ym;
+                        }
+                    } else {
+                        if (outcode1 & outcodeMid) {
+                            x1 = xm;
+                            y1 = ym;
+                        } else {
+                            x2 = xm;
+                            y2 = ym;
+                        }
+                    }
+                }
+            }
+            
+            const outcode1Final = computeOutCode({ x: x1, y: y1 }, window);
+            const outcode2Final = computeOutCode({ x: x2, y: y2 }, window);
+            if (outcode1Final === 0 && outcode2Final === 0) {
+                return { p1: { x: x1, y: y1 }, p2: { x: x2, y: y2 } };
+            } else {
+                return null;
+            }
+        }
+
+        // Алгоритм Кируса-Бека для выпуклых многоугольников
+        function cyrusBeckClip(segment, polygon) {
+            let tE = 0;
+            let tL = 1;
+            const d = {
+                x: segment.p2.x - segment.p1.x,
+                y: segment.p2.y - segment.p1.y
+            };
+            
+            for (let i = 0; i < polygon.length; i++) {
+                const current = polygon[i];
+                const next = polygon[(i + 1) % polygon.length];
+                
+                const edge = {
+                    x: next.x - current.x,
+                    y: next.y - current.y
+                };
+                
+                const normal = {
+                    x: -edge.y,
+                    y: edge.x
+                };
+                
+                const w = {
+                    x: segment.p1.x - current.x,
+                    y: segment.p1.y - current.y
+                };
+                
+                const DdotN = d.x * normal.x + d.y * normal.y;
+                const WdotN = w.x * normal.x + w.y * normal.y;
+                
+                if (DdotN === 0) {
+                    if (WdotN < 0) return null;
+                    continue;
+                }
+                
+                const t = -WdotN / DdotN;
+                
+                if (DdotN > 0) {
+                    tE = Math.max(tE, t);
+                } else {
+                    tL = Math.min(tL, t);
+                }
+                
+                if (tE > tL) return null;
+            }
+            
+            if (tE <= tL) {
+                return {
+                    p1: {
+                        x: segment.p1.x + tE * d.x,
+                        y: segment.p1.y + tE * d.y
+                    },
+                    p2: {
+                        x: segment.p1.x + tL * d.x,
+                        y: segment.p1.y + tL * d.y
+                    }
+                };
+            }
+            
+            return null;
+        }
+
+        window.onload = function() {
+            drawScene();
+            displayAlgorithmExplanation();
+        };
+    </script>
+</body>
+</html>
